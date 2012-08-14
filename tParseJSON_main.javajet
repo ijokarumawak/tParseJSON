@@ -1,0 +1,103 @@
+<%@ jet imports="
+java.util.List
+java.util.Map
+org.talend.core.model.metadata.IMetadataColumn
+org.talend.core.model.process.BlockCode
+org.talend.core.model.process.EConnectionType
+org.talend.core.model.process.ElementParameterParser
+org.talend.core.model.process.IConnection
+org.talend.core.model.process.IConnectionCategory
+org.talend.core.model.process.INode
+org.talend.designer.codegen.config.CodeGeneratorArgument" 
+%>
+<% 
+CodeGeneratorArgument codeGenArgument = (CodeGeneratorArgument) argument;
+INode node = (INode)codeGenArgument.getArgument();
+String cid = node.getUniqueName();  
+List<? extends IConnection> inConns = node.getIncomingConnections(EConnectionType.FLOW_MAIN);
+List<? extends IConnection> outConns = node.getOutgoingConnections(EConnectionType.FLOW_MAIN);
+
+if (inConns == null || inConns.isEmpty() || outConns == null || outConns.isEmpty()){
+  return "";
+}
+IConnection inConn = null, outConn = null;
+inConn = inConns.get(0);
+outConn = outConns.get(0);
+
+if (!inConn.isActivate() || !outConn.isActivate()){
+  return "";
+}
+String inConnName = inConn.getName();
+String outConnName = outConn.getName();
+
+if (!inConn.getLineStyle().hasConnectionCategory(IConnectionCategory.DATA)
+      || !outConn.getLineStyle().hasConnectionCategory(IConnectionCategory.DATA) ){
+  return "";
+}
+List<IMetadataColumn> outColumns = outConn.getMetadataTable().getListColumns();
+List<Map<String, String>> queryMappings = (List<Map<String, String>>)ElementParameterParser.getObjectValue(node, "__QUERY_MAPPING__");
+String inputObject = ElementParameterParser.getValue(node, "__INPUT_OBJECT__");
+String loopQuery = ElementParameterParser.getValue(node, "__LOOP_QUERY__");
+
+%>
+
+  String json_<%=cid %> = <%=inputObject %>;
+  com.jayway.jsonpath.JsonPath loopQuery_<%=cid %> = com.jayway.jsonpath.JsonPath.compile(<%=loopQuery %>);
+  net.minidev.json.JSONArray loopElements_<%=cid %> = null;
+  Object loopElementsTemp_<%=cid %> = loopQuery_<%=cid %>.read(json_<%=cid %>);
+  if (loopElementsTemp_<%=cid %> instanceof net.minidev.json.JSONArray) {
+    loopElements_<%=cid %> = (net.minidev.json.JSONArray)loopElementsTemp_<%=cid %>;
+
+  } else if (loopElementsTemp_<%=cid %> instanceof net.minidev.json.JSONObject) {
+    loopElements_<%=cid %> = new net.minidev.json.JSONArray();
+    loopElements_<%=cid %>.add(loopElementsTemp_<%=cid %>);
+  }
+
+<%
+if (queryMappings != null && !queryMappings.isEmpty()){
+%>
+  
+  int rowNumber_<%=cid%> = loopElements_<%=cid%>.size();
+  
+  java.util.List<<%=outConnName%>Struct> rows_<%=cid%> = new java.util.ArrayList<<%=outConnName%>Struct>(rowNumber_<%=cid%>);
+  <%=outConnName%>Struct rowTmp_<%=cid%> = null;
+
+  // Compile JSONPaths.
+  java.util.Map<String, com.jayway.jsonpath.JsonPath> compiledPaths_<%=cid %> = new java.util.HashMap<String, com.jayway.jsonpath.JsonPath>();
+  <%for (Map<String, String> queryMapping : queryMappings) {
+	String column = queryMapping.get("SCHEMA_COLUMN");
+    String query = queryMapping.get("QUERY");
+  %>
+  compiledPaths_<%=cid %>.put("<%=column %>", com.jayway.jsonpath.JsonPath.compile(<%=query %>));
+  <%}%>
+
+  // cache output rows for the loop
+  for (Object loopElement_<%=cid %> : loopElements_<%=cid %>) {
+
+    rowTmp_<%=cid%> = new <%=outConnName%>Struct();
+    
+    <%for (Map<String, String> queryMapping : queryMappings) {
+		String column = queryMapping.get("SCHEMA_COLUMN");
+    %>
+
+	    try {
+	      rowTmp_<%=cid%>.<%=column%> = compiledPaths_<%=cid %>.get("<%=column %>").read(loopElement_<%=cid %>).toString();
+		} catch (com.jayway.jsonpath.InvalidPathException e) {
+			// Not Found.
+		}
+    
+    <%}%>
+
+    rows_<%=cid%>.add(rowTmp_<%=cid%>);
+    nb_line_<%=cid%>++;
+    
+  }
+
+  for (<%=outConnName%>Struct row_<%=cid%> : rows_<%=cid%>) {// C_01
+    <%=outConnName%> = row_<%=cid%>;
+    <%
+    List<BlockCode> blockCodes = new java.util.ArrayList<BlockCode>(1);
+    blockCodes.add(new BlockCode("C_01"));
+    ((org.talend.core.model.process.AbstractNode) node).setBlocksCodeToClose(blockCodes);
+  }
+%> 
