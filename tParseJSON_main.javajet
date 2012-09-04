@@ -1,6 +1,7 @@
 <%@ jet imports="
 java.util.List
 java.util.Map
+org.talend.core.model.metadata.IMetadataTable
 org.talend.core.model.metadata.IMetadataColumn
 org.talend.core.model.process.BlockCode
 org.talend.core.model.process.EConnectionType
@@ -8,7 +9,8 @@ org.talend.core.model.process.ElementParameterParser
 org.talend.core.model.process.IConnection
 org.talend.core.model.process.IConnectionCategory
 org.talend.core.model.process.INode
-org.talend.designer.codegen.config.CodeGeneratorArgument" 
+org.talend.designer.codegen.config.CodeGeneratorArgument
+org.talend.core.model.metadata.types.JavaTypesManager"
 %>
 <% 
 CodeGeneratorArgument codeGenArgument = (CodeGeneratorArgument) argument;
@@ -34,7 +36,8 @@ if (!inConn.getLineStyle().hasConnectionCategory(IConnectionCategory.DATA)
       || !outConn.getLineStyle().hasConnectionCategory(IConnectionCategory.DATA) ){
   return "";
 }
-List<IMetadataColumn> outColumns = outConn.getMetadataTable().getListColumns();
+IMetadataTable outMetadataTable = outConn.getMetadataTable();
+List<IMetadataColumn> outColumns = outMetadataTable.getListColumns();
 List<Map<String, String>> queryMappings = (List<Map<String, String>>)ElementParameterParser.getObjectValue(node, "__QUERY_MAPPING__");
 String inputObject = ElementParameterParser.getValue(node, "__INPUT_OBJECT__");
 String loopQuery = ElementParameterParser.getValue(node, "__LOOP_QUERY__");
@@ -67,6 +70,9 @@ if (queryMappings != null && !queryMappings.isEmpty()){
   <%for (Map<String, String> queryMapping : queryMappings) {
 	String column = queryMapping.get("SCHEMA_COLUMN");
     String query = queryMapping.get("QUERY");
+    if(query == null || query.length() == 0){
+      query = "\"" + column + "\"";
+    }
   %>
   compiledPaths_<%=cid %>.put("<%=column %>", com.jayway.jsonpath.JsonPath.compile(<%=query %>));
   <%}%>
@@ -77,11 +83,58 @@ if (queryMappings != null && !queryMappings.isEmpty()){
     rowTmp_<%=cid%> = new <%=outConnName%>Struct();
     
     <%for (Map<String, String> queryMapping : queryMappings) {
-		String column = queryMapping.get("SCHEMA_COLUMN");
+      String column = queryMapping.get("SCHEMA_COLUMN");
+      IMetadataColumn col = outMetadataTable.getColumn(column);
+      String outPattern = col.getPattern();
+      String outTypeWhole = JavaTypesManager.getTypeToGenerate(col.getTalendType(), col.isNullable());
+      String outType = outTypeWhole.contains(".") ? outTypeWhole.substring(outTypeWhole.lastIndexOf(".") + 1) : outTypeWhole;
+      if (("byte[]").equals(outType)){
+        outType = "byteArray";
+      }
     %>
-
 	    try {
-	      rowTmp_<%=cid%>.<%=column%> = compiledPaths_<%=cid %>.get("<%=column %>").read(loopElement_<%=cid %>).toString();
+	      Object jsonValue_<%=cid %> = compiledPaths_<%=cid %>.get("<%=column %>").read(loopElement_<%=cid %>);
+	      if (jsonValue_<%=cid %> != null ){
+  	        String inType_<%=cid %> = jsonValue_<%=cid %>.getClass().getSimpleName();
+
+	        <% if("String".equals(outType)) { %>
+              rowTmp_<%=cid%>.<%=column%> = jsonValue_<%=cid %>.toString();
+	        <% } else if("Object".equals(outType)) { %>
+              rowTmp_<%=cid%>.<%=column%> = jsonValue_<%=cid %>;
+	        <% } else if("Integer".equals(outType)) { %>
+	          if(jsonValue_<%=cid %> instanceof Integer ){
+                rowTmp_<%=cid%>.<%=column%> = (Integer)jsonValue_<%=cid %>;
+	          } else if(jsonValue_<%=cid %> instanceof Long ){
+                rowTmp_<%=cid%>.<%=column%> = ((Long)jsonValue_<%=cid %>).intValue();
+	          } else if(jsonValue_<%=cid %> instanceof Double ){
+                rowTmp_<%=cid%>.<%=column%> = ((Double)jsonValue_<%=cid %>).intValue();
+	          }
+	        <% } else if("Double".equals(outType)) { %>
+	          if(jsonValue_<%=cid %> instanceof Integer ){
+                rowTmp_<%=cid%>.<%=column%> = ((Integer)jsonValue_<%=cid %>).doubleValue();
+	          } else if(jsonValue_<%=cid %> instanceof Long ){
+                rowTmp_<%=cid%>.<%=column%> = ((Long)jsonValue_<%=cid %>).doubleValue();
+	          } else if(jsonValue_<%=cid %> instanceof Double ){
+                rowTmp_<%=cid%>.<%=column%> = (Double)jsonValue_<%=cid %>;
+	          }
+	        <% } else if("Long".equals(outType)) { %>
+	          if(jsonValue_<%=cid %> instanceof Integer ){
+                rowTmp_<%=cid%>.<%=column%> = ((Integer)jsonValue_<%=cid %>).longValue();
+	          } else if(jsonValue_<%=cid %> instanceof Long ){
+                rowTmp_<%=cid%>.<%=column%> = (Long)jsonValue_<%=cid %>;
+	          } else if(jsonValue_<%=cid %> instanceof Double ){
+                rowTmp_<%=cid%>.<%=column%> = ((Double)jsonValue_<%=cid %>).longValue();
+	          }
+	        <% } else if("Boolean".equalsIgnoreCase(outType)) { %>
+	          if(jsonValue_<%=cid %> instanceof Boolean ){
+                rowTmp_<%=cid%>.<%=column%> = (Boolean)jsonValue_<%=cid %>;
+	          }
+	        <% } else if("List".equals(outType)) { %>
+	          if(jsonValue_<%=cid %> instanceof List ){
+                rowTmp_<%=cid%>.<%=column%> = (List)jsonValue_<%=cid %>;
+	          }
+ 	        <% } %>
+	      }
 		} catch (com.jayway.jsonpath.InvalidPathException e) {
 			// Not Found.
 		}
